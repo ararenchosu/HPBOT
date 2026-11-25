@@ -2,7 +2,10 @@
 import discord
 
 from core import (bot, feature_cfg, is_privileged, register_feature,
-                  register_panel_refresher, save_config, store)
+                  register_panel_refresher, save_config, store,
+                  command_group)
+
+_G = command_group("panel", "パネル", "パネル設置")
 
 register_feature(
     "gate", "enter", "認証ゲート", "📜",
@@ -106,7 +109,7 @@ async def _refresh_gate_on_ready():
             await refresh_gate_panel(int(gid))
 
 
-@bot.tree.command(name="認証パネル設置", description="認証ゲートのパネルを設置する（管理者用）")
+@_G.command(name="認証パネル設置", description="認証ゲートのパネルを設置する（管理者用）")
 async def cmd_gate_panel(interaction):
     if interaction.guild is None:
         return await interaction.response.send_message(

@@ -5,6 +5,10 @@ import os
 
 import discord
 from discord.ext import commands, tasks
+
+from datetime import datetime, timedelta, timezone
+
+JST = timezone(timedelta(hours=9))
 from dotenv import load_dotenv
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -70,6 +74,74 @@ store = JsonStore("config.json")
 
 def save_config():
     store.save()
+
+
+# ---------------------------------------------------------------- ユーザーデータ（data.json）
+data_store = JsonStore(os.path.join(BASE_DIR, "data.json"))
+
+
+def guild_data(guild_id):
+    return data_store.cfg(guild_id)
+
+
+def user_data(guild_id, user_id):
+    return guild_data(guild_id).setdefault("users", {}).setdefault(str(user_id), {})
+
+
+def save_data():
+    data_store.save()
+
+
+# ---------------------------------------------------------------- コマンドグループ
+# Discordのスラッシュコマンド上限（全体100件）を避けるため、分野ごとに
+# グループ化する（1グループ=上位1件、配下に25件まで置ける）。
+from discord import app_commands as _app_commands
+
+_COMMAND_GROUPS = {}
+
+
+def command_group(key, name, description):
+    group = _COMMAND_GROUPS.get(key)
+    if group is None:
+        group = _app_commands.Group(name=name, description=description)
+        _COMMAND_GROUPS[key] = group
+    return group
+
+
+def all_command_groups():
+    return list(_COMMAND_GROUPS.values())
+
+
+def total_command_count():
+    def _count(commands):
+        total = 0
+        for cmd in commands:
+            total += 1
+            sub = getattr(cmd, "commands", None)
+            if sub:
+                total += _count(list(sub.values()) if isinstance(sub, dict)
+                                else list(sub))
+        return total
+    return _count(bot.tree.get_commands())
+
+
+def sel_values(interaction, sel=None):
+    """セレクトの選択値を取る（常設パネルの再登録時にも安全な方法）"""
+    data = getattr(interaction, "data", None) or {}
+    values = data.get("values")
+    if values:
+        return list(values)
+    if sel is not None:
+        return list(sel.values)
+    return []
+
+
+def jst_now():
+    return datetime.now(JST)
+
+
+def fmt_dt(dt):
+    return dt.astimezone(JST).strftime("%Y-%m-%d %H:%M:%S JST")
 
 
 # ---------------------------------------------------------------- パネル再描画フック
@@ -228,7 +300,7 @@ bot = MegaBot(command_prefix="!", intents=intents)
 async def _rotate_status():
     entries = [
         f"{len(bot.guilds)} 件のサーバーで稼働中",
-        f"{len(bot.tree.get_commands())} 件のコマンド",
+        f"{total_command_count()} 件のコマンド",
     ]
     idx = getattr(_rotate_status, "_idx", 0)
     _rotate_status._idx = idx + 1

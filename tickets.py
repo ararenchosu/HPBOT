@@ -3,7 +3,10 @@ import discord
 
 from core import (bot, feature_cfg, is_privileged, refresh_panels,
                   register_feature, register_panel_refresher, save_config,
-                  store)
+                  store,
+                  command_group)
+
+_G = command_group("support", "サポート", "サポート機能")
 
 register_feature(
     "tickets", "support", "チケット", "🎫",
@@ -375,7 +378,7 @@ async def _refresh_tickets_on_ready():
             await refresh_ticket_panel(int(gid))
 
 
-@bot.tree.command(name="チケットパネル設置", description="チケットパネルを設置する（管理者用）")
+@_G.command(name="チケットパネル設置", description="チケットパネルを設置する（管理者用）")
 async def cmd_ticket_panel(interaction):
     if interaction.guild is None:
         return await interaction.response.send_message(
@@ -672,7 +675,7 @@ class TicketSettingsView(discord.ui.View):
         self.add_item(back)
 
 
-@bot.tree.command(name="チケット設定", description="チケットの種類などを設定する（管理者用）")
+@_G.command(name="チケット設定", description="チケットの種類などを設定する（管理者用）")
 async def cmd_ticket_settings(interaction):
     if interaction.guild is None:
         return await interaction.response.send_message(

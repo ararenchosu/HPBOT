@@ -8,7 +8,7 @@ import discord
 from core import (CATEGORIES, FEATURES, bot, category_of, feature_cfg,
                   features_in, floors_map, is_privileged, refresh_panels,
                   register_feature, register_panel_refresher, save_config,
-                  save_floors_map, store, visible_floors)
+                  save_floors_map, store, visible_floors, command_group)
 
 RIDE_STEP = 1.0  # 乗車アニメーションの1段階（25%）あたりの秒数
 
@@ -811,7 +811,7 @@ async def cmd_settings(interaction):
         embed=view.embed(), view=view, ephemeral=True)
 
 
-@bot.tree.command(name="エレベーター設置", description="常時設置型エレベーターパネルを設置する（管理者用）")
+@command_group("panel", "パネル", "パネル設置").command(name="エレベーター設置", description="常時設置型エレベーターパネルを設置する（管理者用）")
 async def cmd_elevator_panel(interaction):
     if interaction.guild is None:
         return await interaction.response.send_message(
