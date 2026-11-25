@@ -119,7 +119,7 @@ def feature_enabled(guild_id, key) -> bool:
 
 # ---------------------------------------------------------------- エレベーターの階
 def floors_map(guild_id):
-    """階 → カテゴリキーの対応表 {階番号: カテゴリキー or None}。階は無限に増やせる。"""
+    """階 → サーバー内カテゴリIDの対応表 {階番号: カテゴリID or None}。階は無限に増やせる。"""
     cfg = feature_cfg(guild_id, "elevator")
     if not cfg.get("_floors_v2"):
         # 旧形式（floor_1..12）からの移行: 有効な割り当てだけ引き継ぐ
@@ -132,11 +132,15 @@ def floors_map(guild_id):
         cfg["floors_map"] = m
         cfg["_floors_v2"] = True
         store.save()
-    valid = {c["key"] for c in CATEGORIES}
     result = {}
     for k, v in (cfg.get("floors_map") or {}).items():
         if str(k).isdigit():
-            result[int(k)] = v if v in valid else None
+            if isinstance(v, int):
+                result[int(k)] = v
+            elif isinstance(v, str) and v.isdigit():
+                result[int(k)] = int(v)
+            else:
+                result[int(k)] = None
     return result
 
 
