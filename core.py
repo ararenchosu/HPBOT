@@ -119,7 +119,7 @@ def feature_enabled(guild_id, key) -> bool:
 
 # ---------------------------------------------------------------- エレベーターの階
 def floors_map(guild_id):
-    """階 → サーバー内カテゴリIDの対応表 {階番号: カテゴリID or None}。階は無限に増やせる。"""
+    """階 → サーバー内カテゴリIDの対応表 {階番号: [カテゴリID, ...]}。階は無限に増やせて、1階に複数カテゴリを置ける。"""
     cfg = feature_cfg(guild_id, "elevator")
     if not cfg.get("_floors_v2"):
         # 旧形式（floor_1..12）からの移行: 有効な割り当てだけ引き継ぐ
@@ -135,13 +135,24 @@ def floors_map(guild_id):
     result = {}
     for k, v in (cfg.get("floors_map") or {}).items():
         if str(k).isdigit():
-            if isinstance(v, int):
-                result[int(k)] = v
-            elif isinstance(v, str) and v.isdigit():
-                result[int(k)] = int(v)
-            else:
-                result[int(k)] = None
+            result[int(k)] = _coerce_cat_ids(v)
     return result
+
+
+def _coerce_cat_ids(v):
+    if isinstance(v, int):
+        return [v]
+    if isinstance(v, str) and v.isdigit():
+        return [int(v)]
+    if isinstance(v, list):
+        out = []
+        for x in v:
+            if isinstance(x, int):
+                out.append(x)
+            elif isinstance(x, str) and x.isdigit():
+                out.append(int(x))
+        return out
+    return []
 
 
 def save_floors_map(guild_id, m):
@@ -153,7 +164,7 @@ def save_floors_map(guild_id, m):
 def visible_floors(guild_id):
     """パネル等に表示する階: 割り当て済みの階 ＋ 常に1階（未設定でも1階だけは出す）"""
     m = floors_map(guild_id)
-    return sorted({1} | {n for n, c in m.items() if c})
+    return sorted({1} | {n for n, ids in m.items() if ids})
 
 
 # カテゴリ（階）の定義 — 機能はこの下にぶら下がる
