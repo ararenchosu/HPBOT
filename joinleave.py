@@ -18,26 +18,40 @@ register_feature(
          "default": True},
         {"key": "leave_on", "label": "退出メッセージ", "type": "toggle",
          "default": True},
+        {"key": "join_title", "label": "参加Embedのタイトル", "type": "text",
+         "default": "📥 メンバーが参加しました！"},
+        {"key": "leave_title", "label": "退出Embedのタイトル", "type": "text",
+         "default": "📤 メンバーが退出しました！"},
+        {"key": "label_name", "label": "項目名：ユーザー名", "type": "text",
+         "default": "ユーザー名"},
+        {"key": "label_id", "label": "項目名：ユーザーID", "type": "text",
+         "default": "ユーザーID"},
+        {"key": "label_created", "label": "項目名：アカウント作成日", "type": "text",
+         "default": "アカウント作成日"},
+        {"key": "label_age", "label": "項目名：作成からの経過", "type": "text",
+         "default": "作成からの経過"},
     ],
     help_text=("管理者が /設定 → 👋 入退室・認証 → 入退室通知 で有効化し、"
                "送信先チャンネルと参加/退出それぞれのON・OFFを決めます。"),
 )
 
 
-def _member_embed(member, joined: bool) -> discord.Embed:
+def _member_embed(member, joined: bool, cfg) -> discord.Embed:
     created = member.created_at
     days = (datetime.now(timezone.utc) - created).days
     created_jst = created.astimezone(JST).strftime("%Y-%m-%d %H:%M:%S JST")
     age_note = "（今日作成）" if days == 0 else f"（約{days}日前）"
     embed = discord.Embed(
-        title="📥 メンバーが参加しました！" if joined else "📤 メンバーが退出しました！",
+        title=cfg.get("join_title") if joined else cfg.get("leave_title"),
         color=discord.Color.green() if joined else discord.Color.red())
-    embed.add_field(name="ユーザー名",
+    embed.add_field(name=cfg.get("label_name") or "ユーザー名",
                     value=f"{member.mention}\n`{member.name}`", inline=False)
-    embed.add_field(name="ユーザーID", value=f"`{member.id}`", inline=False)
-    embed.add_field(name="アカウント作成日",
+    embed.add_field(name=cfg.get("label_id") or "ユーザーID",
+                    value=f"`{member.id}`", inline=False)
+    embed.add_field(name=cfg.get("label_created") or "アカウント作成日",
                     value=f"{created_jst}\n{age_note}", inline=False)
-    embed.add_field(name="作成からの経過", value=f"{days}日", inline=False)
+    embed.add_field(name=cfg.get("label_age") or "作成からの経過",
+                    value=f"{days}日", inline=False)
     try:
         embed.set_thumbnail(url=member.display_avatar.url)
     except Exception:
@@ -57,7 +71,7 @@ async def _notify(member, joined: bool):
         channel = member.guild.get_channel(int(cfg["channel_id"]))
         if channel is None:
             return
-        await channel.send(embed=_member_embed(member, joined))
+        await channel.send(embed=_member_embed(member, joined, cfg))
     except Exception:
         pass
 
