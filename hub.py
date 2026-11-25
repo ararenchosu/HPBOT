@@ -109,13 +109,15 @@ def _ride_embed(floor, pct, arrived=False):
 class ItemModal(discord.ui.Modal):
     """text / number 型の設定値を入力するモーダル"""
 
-    def __init__(self, view, item):
+    def __init__(self, view, item, current=None):
         super().__init__(title=f"✏️ {item['label']}"[:45])
         self.view = view
         self.item = item
-        cur = view.cfg().get(item["key"])
+        cur = current if current is not None else view.cfg().get(item["key"])
         self.text = discord.ui.TextInput(
             label=item["label"][:45],
+            style=(discord.TextStyle.paragraph if item.get("style") == "long"
+                   else discord.TextStyle.short),
             max_length=20 if item["type"] == "number" else 1000,
             placeholder="数字で入力" if item["type"] == "number" else None,
             default=str(cur)[:1000] if cur is not None else None)
@@ -328,8 +330,12 @@ class ElevatorView(discord.ui.View):
             if v.startswith("text:"):
                 key = v.split(":", 1)[1]
                 label = "パネルのタイトル" if key == "panel_title" else "パネルの説明文"
+                ptitle, ptext = _panel_texts(self.gid)
+                item = {"key": key, "label": label, "type": "text",
+                        "style": "long" if key == "panel_text" else "short"}
                 return await interaction.response.send_modal(
-                    ItemModal(self, {"key": key, "label": label, "type": "text"}))
+                    ItemModal(self, item,
+                              current=ptitle if key == "panel_title" else ptext))
             if v == "__add_floor":
                 mm = floors_map(self.gid)
                 n = (max(mm.keys()) if mm else 0) + 1
