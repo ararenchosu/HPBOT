@@ -72,6 +72,23 @@ def save_config():
     store.save()
 
 
+# ---------------------------------------------------------------- パネル再描画フック
+PANEL_REFRESHERS = []
+
+
+def register_panel_refresher(fn):
+    PANEL_REFRESHERS.append(fn)
+
+
+async def refresh_panels(guild_id):
+    """設定が保存されたら、設置済みパネル全部を最新表示に直す"""
+    for fn in PANEL_REFRESHERS:
+        try:
+            await fn(guild_id)
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------- レジストリ
 # カテゴリ（エレベーターの「階」）と機能（「部屋」）を登録する。
 # 機能モジュールは register_feature で自分の設定項目（スキーマ）を宣言するだけで、
