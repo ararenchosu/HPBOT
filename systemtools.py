@@ -235,3 +235,126 @@ async def cmd_pinlist(interaction):
              f"{m.jump_url}" for m in pins[:15]]
     await interaction.response.send_message(
         "📌 **ピン留め一覧**\n" + "\n".join(lines), ephemeral=True)
+
+
+# ---------------------------------------------------------------- カラーロール（複数色グラデーション対応）
+register_feature(
+    "colorrole", CAT, "カラーロール作成", "🌈",
+    "単色・グラデーションのロールを作成する。",
+    settings=[
+        {"key": "palette", "label": "一括作成パレット（1行に 名前:#色1:#色2）",
+         "type": "text", "style": "long",
+         "default": "赤:#ff0000\n青:#0000ff\n虹:#ff0000:#0000ff"},
+        {"key": "hoist", "label": "メンバー一覧で分けて表示", "type": "toggle",
+         "default": True},
+        {"key": "mentionable", "label": "メンション可能にする", "type": "toggle",
+         "default": False},
+    ],
+    help_text=("/システム グラデーションロール 名前 色1 色2 で作成。"
+               "色3まで入れるとホログラフィックになります"
+               "（グラデーションはブーストLv2、ホロはLv3のサーバーで有効）。"))
+
+
+def _parse_color(text):
+    hexv = (text or "").strip().lstrip("#")
+    value = int(hexv, 16)
+    if not (0 <= value <= 0xFFFFFF):
+        raise ValueError
+    return discord.Colour(value)
+
+
+async def _create_color_role(interaction, name, colors):
+    from core import feature_cfg
+    cfg = feature_cfg(interaction.guild.id, "colorrole")
+    kwargs = {"name": name[:100],
+              "colour": colors[0],
+              "hoist": bool(cfg.get("hoist", True)),
+              "mentionable": bool(cfg.get("mentionable", False)),
+              "reason": "カラーロール作成"}
+    if len(colors) >= 2:
+        kwargs["secondary_colour"] = colors[1]
+    if len(colors) >= 3:
+        kwargs["tertiary_colour"] = colors[2]
+    return await interaction.guild.create_role(**kwargs)
+
+
+@_G.command(name="グラデーションロール",
+            description="複数色のロールを作成する（管理者用）")
+@discord.app_commands.describe(名前="ロール名", 色1="基本色 #ff0000",
+                               色2="2色目（グラデーション）",
+                               色3="3色目（ホログラフィック・任意）")
+async def cmd_gradient_role(interaction, 名前: str, 色1: str, 色2: str,
+                            色3: str = ""):
+    if not _admin(interaction, "colorrole"):
+        return await interaction.response.send_message(
+            "⚠️ 管理者だけが使えます（または機能が無効）。", ephemeral=True)
+    try:
+        colors = [_parse_color(色1), _parse_color(色2)]
+        if 色3.strip():
+            colors.append(_parse_color(色3))
+    except ValueError:
+        return await interaction.response.send_message(
+            "⚠️ 色は #ff0000 の形で入れてね。", ephemeral=True)
+    try:
+        role = await _create_color_role(interaction, 名前, colors)
+    except Exception:
+        return await interaction.response.send_message(
+            "⚠️ 作成できませんでした。BOTの権限とサーバーのブーストレベルを"
+            "確認してね（グラデーションはLv2、ホロはLv3が必要）。",
+            ephemeral=True)
+    style = "ホログラフィック" if len(colors) >= 3 else "グラデーション"
+    await interaction.response.send_message(
+        f"🌈 {style}ロール {role.mention} を作成しました。", ephemeral=True)
+
+
+@_G.command(name="カラーロール", description="単色のロールを作成する（管理者用）")
+@discord.app_commands.describe(名前="ロール名", 色="色 #ff0000")
+async def cmd_single_role(interaction, 名前: str, 色: str):
+    if not _admin(interaction, "colorrole"):
+        return await interaction.response.send_message(
+            "⚠️ 管理者だけが使えます（または機能が無効）。", ephemeral=True)
+    try:
+        color = _parse_color(色)
+    except ValueError:
+        return await interaction.response.send_message(
+            "⚠️ 色は #ff0000 の形で入れてね。", ephemeral=True)
+    try:
+        role = await _create_color_role(interaction, 名前, [color])
+    except Exception:
+        return await interaction.response.send_message(
+            "⚠️ 作成できませんでした。", ephemeral=True)
+    await interaction.response.send_message(
+        f"🌈 ロール {role.mention} を作成しました。", ephemeral=True)
+
+
+@_G.command(name="カラーパレット作成",
+            description="設定したパレットのロールを一括作成する（管理者用）")
+async def cmd_palette_roles(interaction):
+    if not _admin(interaction, "colorrole"):
+        return await interaction.response.send_message(
+            "⚠️ 管理者だけが使えます（または機能が無効）。", ephemeral=True)
+    from core import feature_cfg
+    text = feature_cfg(interaction.guild.id,
+                       "colorrole").get("palette") or ""
+    await interaction.response.defer(ephemeral=True)
+    created, failed = [], []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or ":" not in line:
+            continue
+        parts = [p.strip() for p in line.split(":")]
+        name, color_texts = parts[0], parts[1:]
+        try:
+            colors = [_parse_color(c) for c in color_texts if c]
+            if not colors:
+                raise ValueError
+            role = await _create_color_role(interaction, name, colors)
+            created.append(role.mention)
+        except Exception:
+            failed.append(name)
+    message = f"🌈 {len(created)} 件作成しました。"
+    if created:
+        message += "\n" + " ".join(created)
+    if failed:
+        message += f"\n⚠️ 失敗: {', '.join(failed)}"
+    await interaction.followup.send(message, ephemeral=True)
