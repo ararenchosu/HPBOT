@@ -49,9 +49,21 @@ def _discord_category(gid, cid):
     return None
 
 
-def _floor_cat_name(gid, cid):
-    cat = _discord_category(gid, cid)
-    return cat.name if cat is not None else None
+def _floor_cat_names(gid, ids):
+    names = []
+    for cid in (ids or []):
+        cat = _discord_category(gid, cid)
+        if cat is not None:
+            names.append(cat.name)
+    return names
+
+
+def _floor_label(gid, ids):
+    """階の表示名: '📁 A / 📁 B'（なければ None）"""
+    names = _floor_cat_names(gid, ids)
+    if not names:
+        return None
+    return " / ".join(f"📁 {nm}" for nm in names)
 
 
 def _fmt_value(item, value):
@@ -77,8 +89,8 @@ def _floor_lines(gid):
     m = floors_map(gid)
     lines = []
     for n in visible_floors(gid):
-        name = _floor_cat_name(gid, m.get(n))
-        lines.append(f"**{n}階** — 📁 {name}" if name
+        label = _floor_label(gid, m.get(n))
+        lines.append(f"**{n}階** — {label}" if label
                      else f"**{n}階** — 未設定")
     return lines
 
@@ -121,6 +133,8 @@ class ItemModal(discord.ui.Modal):
             value = raw
         self.view.cfg()[self.item["key"]] = value
         save_config()
+        if getattr(self.view, "feature", None) == "elevator":
+            await refresh_elevator_panel(self.view.gid)
         self.view.edit = None
         self.view._build()
         await interaction.response.edit_message(
@@ -186,12 +200,16 @@ class ElevatorView(discord.ui.View):
         m = floors_map(self.gid)
         options = []
         for i in visible_floors(self.gid):
-            name = _floor_cat_name(self.gid, m.get(i))
-            options.append(discord.SelectOption(
-                label=f"{i}階 — {name}" if name else f"{i}階 — 未設定",
-                value=str(i),
-                emoji="📁" if name else None,
-                default=(self.floor == i)))
+            names = _floor_cat_names(self.gid, m.get(i))
+            if names:
+                label = names[0] + (f" ほか{len(names) - 1}件" if len(names) > 1 else "")
+                options.append(discord.SelectOption(
+                    label=f"{i}階 — {label}"[:100], value=str(i),
+                    emoji="📁", default=(self.floor == i)))
+            else:
+                options.append(discord.SelectOption(
+                    label=f"{i}階 — 未設定", value=str(i),
+                    default=(self.floor == i)))
         if not self.readonly:
             options.append(discord.SelectOption(
                 label="階の割り当て設定", value="__floors", emoji="🛗",
@@ -283,13 +301,20 @@ class ElevatorView(discord.ui.View):
             label="🔘 有効 / 無効", value="__toggle",
             description="現在: " + ("🟢 有効" if self.cfg().get("enabled") else "⚪ 無効"))]
         for n in sorted(m.keys()):
-            name = _floor_cat_name(self.gid, m.get(n))
+            label = _floor_label(self.gid, m.get(n))
             options.append(discord.SelectOption(
                 label=f"{n}階", value=f"floor:{n}",
-                description=("現在: " + (f"📁 {name}" if name else "未設定"))[:100]))
+                description=("現在: " + (label if label else "未設定"))[:100]))
         options.append(discord.SelectOption(
             label="➕ 階を追加", value="__add_floor",
             description="新しい階を増やす（無限に追加できる）"))
+        title, text = _panel_texts(self.gid)
+        options.append(discord.SelectOption(
+            label="📝 パネルのタイトル", value="text:panel_title",
+            description=f"現在: {title}"[:100]))
+        options.append(discord.SelectOption(
+            label="📝 パネルの説明文", value="text:panel_text",
+            description=f"現在: {text}"[:100]))
         isel = discord.ui.Select(placeholder="⚙️ 階を選ぶ / 追加する",
                                  options=options, row=2)
 
@@ -300,10 +325,15 @@ class ElevatorView(discord.ui.View):
             if v == "__toggle":
                 self.edit = "__toggle"
                 return await self._rerender(interaction)
+            if v.startswith("text:"):
+                key = v.split(":", 1)[1]
+                label = "パネルのタイトル" if key == "panel_title" else "パネルの説明文"
+                return await interaction.response.send_modal(
+                    ItemModal(self, {"key": key, "label": label, "type": "text"}))
             if v == "__add_floor":
                 mm = floors_map(self.gid)
                 n = (max(mm.keys()) if mm else 0) + 1
-                mm[n] = None
+                mm[n] = []
                 save_floors_map(self.gid, mm)
                 self.edit = f"floor:{n}"
                 await self._rerender(interaction)
@@ -317,30 +347,33 @@ class ElevatorView(discord.ui.View):
 
     def _build_floor_editor(self):
         n = int(self.edit.split(":", 1)[1])
-        cur = floors_map(self.gid).get(n)
+        cur = floors_map(self.gid).get(n) or []
         opts = [discord.SelectOption(label="未設定", value="__none",
-                                     default=(cur is None))]
+                                     default=(not cur))]
         g = _guild(self.gid)
-        for c in (getattr(g, "categories", []) or []):
+        for c in (getattr(g, "categories", []) or [])[:23]:
             opts.append(discord.SelectOption(
                 label=f"📁 {c.name}"[:100], value=str(c.id),
-                default=(cur == c.id)))
+                default=(c.id in cur)))
         opts.append(discord.SelectOption(label="🗑 この階を削除", value="__delete"))
-        vsel = discord.ui.Select(placeholder=f"✏️ {n}階のカテゴリを選ぶ",
-                                 options=opts, row=2)
+        vsel = discord.ui.Select(
+            placeholder=f"✏️ {n}階のカテゴリを選ぶ（複数OK）",
+            options=opts, row=2, min_values=1, max_values=len(opts))
 
         async def _val(interaction, _sel=vsel):
             if not await self._gate(interaction):
                 return
-            v = _sel.values[0]
+            vals = list(_sel.values)
             mm = floors_map(self.gid)
-            if v == "__delete":
+            if "__delete" in vals:
                 if n == 1:
-                    mm[1] = None
+                    mm[1] = []
                 else:
                     mm.pop(n, None)
+            elif "__none" in vals:
+                mm[n] = []
             else:
-                mm[n] = None if v == "__none" else int(v)
+                mm[n] = [int(v) for v in vals]
             save_floors_map(self.gid, mm)
             self.edit = None
             await self._rerender(interaction)
@@ -513,10 +546,10 @@ class ElevatorView(discord.ui.View):
                 m = floors_map(self.gid)
                 if m:
                     for n in sorted(m.keys()):
-                        name = _floor_cat_name(self.gid, m.get(n))
+                        label = _floor_label(self.gid, m.get(n))
                         embed.add_field(
                             name=f"{n}階",
-                            value=(f"📁 {name}" if name else "未設定"),
+                            value=(label if label else "未設定"),
                             inline=True)
                 else:
                     embed.add_field(name="階", value="まだ階がありません", inline=False)
@@ -548,26 +581,33 @@ class ElevatorView(discord.ui.View):
                 description="カテゴリを選んでね。\n\n" + "\n".join(lines),
                 color=discord.Color.blurple())
         if self.floor is not None:
-            cat = _discord_category(self.gid, floors_map(self.gid).get(self.floor))
-            if cat is None:
+            ids = floors_map(self.gid).get(self.floor) or []
+            cats = [c for c in (_discord_category(self.gid, cid) for cid in ids)
+                    if c is not None]
+            if not cats:
                 return discord.Embed(
                     title=f"🛗 {self.floor}階",
                     description=("この階にはまだカテゴリが設定されてないよ。\n"
                                  "管理者は /設定 → システム → エレベーター設定 から設定できます。"),
                     color=discord.Color.greyple())
-            lines = []
-            for ch in (getattr(cat, "channels", []) or [])[:25]:
-                if getattr(ch, "type", None) == discord.ChannelType.voice:
-                    lines.append(f"🔊 {ch.name}")
-                else:
-                    lines.append(f"<#{ch.id}>")
-            return discord.Embed(
-                title=f"🛗 {self.floor}階 — 📁 {cat.name}",
-                description="\n".join(lines) if lines else "このカテゴリにはチャンネルがありません。",
-                color=discord.Color.blurple())
+            embed = discord.Embed(title=f"🛗 {self.floor}階",
+                                  color=discord.Color.blurple())
+            for cat in cats[:10]:
+                lines = []
+                for ch in (getattr(cat, "channels", []) or [])[:25]:
+                    if getattr(ch, "type", None) == discord.ChannelType.voice:
+                        lines.append(f"🔊 {ch.name}")
+                    else:
+                        lines.append(f"<#{ch.id}>")
+                embed.add_field(
+                    name=f"📁 {cat.name}",
+                    value="\n".join(lines) if lines else "チャンネルがありません",
+                    inline=False)
+            return embed
+        title, text = _panel_texts(self.gid)
         return discord.Embed(
-            title="🛗 エレベーター",
-            description="乗りたい階を選んでね。\n\n" + "\n".join(_floor_lines(self.gid)),
+            title=title,
+            description=text + "\n\n" + "\n".join(_floor_lines(self.gid)),
             color=discord.Color.blurple())
 
     async def _gate(self, interaction):
@@ -583,11 +623,21 @@ class ElevatorView(discord.ui.View):
 
 
 # ---------------------------------------------------------------- 常時設置パネル
+PANEL_TITLE_DEFAULT = "🛗 エレベーター"
+PANEL_TEXT_DEFAULT = "乗りたい階を選んでね。選んだ階に設定されたカテゴリが開きます。"
+
+
+def _panel_texts(gid):
+    cfg = feature_cfg(gid, "elevator")
+    return (cfg.get("panel_title") or PANEL_TITLE_DEFAULT,
+            cfg.get("panel_text") or PANEL_TEXT_DEFAULT)
+
+
 def build_panel_embed(gid):
+    title, text = _panel_texts(gid)
     return discord.Embed(
-        title="🛗 エレベーター",
-        description=("乗りたい階を選んでね。選んだ階に設定されたカテゴリが開きます。\n\n"
-                     + "\n".join(_floor_lines(gid))),
+        title=title,
+        description=text + "\n\n" + "\n".join(_floor_lines(gid)),
         color=discord.Color.blurple())
 
 
@@ -600,10 +650,10 @@ class ElevatorPanelView(discord.ui.View):
         floors = visible_floors(guild_id) if guild_id is not None else [1]
         options = []
         for i in floors:
-            name = _floor_cat_name(guild_id, m.get(i)) if guild_id is not None else None
+            label = _floor_label(guild_id, m.get(i)) if guild_id is not None else None
             options.append(discord.SelectOption(
                 label=f"{i}階", value=str(i),
-                description=(f"📁 {name}" if name else "未設定")[:100]))
+                description=(label if label else "未設定")[:100]))
         sel = discord.ui.Select(custom_id="mega_elevator:floor",
                                 placeholder="🛗 乗りたい階を選んでね",
                                 options=options)
