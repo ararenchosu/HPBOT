@@ -6,8 +6,9 @@ import asyncio
 import discord
 
 from core import (CATEGORIES, FEATURES, bot, category_of, feature_cfg,
-                  features_in, floors_map, is_privileged, register_feature,
-                  save_config, save_floors_map, store, visible_floors)
+                  features_in, floors_map, is_privileged, refresh_panels,
+                  register_feature, register_panel_refresher, save_config,
+                  save_floors_map, store, visible_floors)
 
 RIDE_STEP = 1.0  # 乗車アニメーションの1段階（25%）あたりの秒数
 
@@ -135,8 +136,7 @@ class ItemModal(discord.ui.Modal):
             value = raw
         self.view.cfg()[self.item["key"]] = value
         save_config()
-        if getattr(self.view, "feature", None) == "elevator":
-            await refresh_elevator_panel(self.view.gid)
+        await refresh_panels(self.view.gid)
         self.view.edit = None
         self.view._build()
         await interaction.response.edit_message(
@@ -463,8 +463,7 @@ class ElevatorView(discord.ui.View):
                 save_config()
                 self.edit = None
                 await self._rerender(interaction)
-                if self.feature == "elevator":
-                    await refresh_elevator_panel(self.gid)
+                await refresh_panels(self.gid)
 
             vsel.callback = _val
             self.add_item(vsel)
@@ -481,6 +480,7 @@ class ElevatorView(discord.ui.View):
                 save_config()
                 self.edit = None
                 await self._rerender(interaction)
+                await refresh_panels(self.gid)
 
             csel.callback = _ch
             self.add_item(csel)
@@ -496,6 +496,7 @@ class ElevatorView(discord.ui.View):
                 save_config()
                 self.edit = None
                 await self._rerender(interaction)
+                await refresh_panels(self.gid)
 
             rsel.callback = _role
             self.add_item(rsel)
@@ -703,6 +704,9 @@ async def refresh_elevator_panel(guild_id):
                        view=ElevatorPanelView(guild_id))
     except Exception:
         pass
+
+
+register_panel_refresher(refresh_elevator_panel)
 
 
 @bot.listen("on_ready")
