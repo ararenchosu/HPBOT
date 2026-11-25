@@ -8,9 +8,12 @@ from core import FEATURES, TOKEN, bot
 import hub  # noqa: F401  （/設定・/ヘルプ・エレベーターパネル）
 import joinleave  # noqa: F401  （入退室通知）
 import gate  # noqa: F401  （認証ゲート）
+import tickets  # noqa: F401  （チケット）
 
 bot.add_view(hub.ElevatorPanelView())  # 常時設置パネルを再起動後も有効に
 bot.add_view(gate.GatePanelView())
+bot.add_view(tickets.TicketPanelView())
+bot.add_view(tickets.TicketManageView())
 
 
 @bot.tree.command(name="ボット情報", description="このBOTの情報を表示する")
