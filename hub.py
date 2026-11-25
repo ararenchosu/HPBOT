@@ -16,11 +16,42 @@ ON_OFF = [("on", "🟢 有効にする"), ("off", "⚪ 無効にする")]
 
 register_feature(
     "elevator", "system", "エレベーター設定", "🛗",
-    "エレベーターの各階に割り当てるカテゴリを設定する。階は無限に増やせる。",
+    "エレベーターの各階に、このサーバーのカテゴリを割り当てる。階は無限に増やせる。",
     settings=[],
-    help_text=("階を追加してカテゴリを割り当てると、エレベーターでその階が使えるようになります。"
+    help_text=("階を追加してサーバーのカテゴリを割り当てると、エレベーターでその階へ行けるようになります。"
                "割り当てのない階はパネルに表示されません（1階だけは常に表示）。"),
 )
+
+
+# ---------------------------------------------------------------- ギルド解決
+_guilds = {}
+
+
+def _guild(gid):
+    g = _guilds.get(gid)
+    if g is None:
+        g = bot.get_guild(gid)
+        if g is not None:
+            _guilds[gid] = g
+    return g
+
+
+def _discord_category(gid, cid):
+    """サーバー内のカテゴリ（チャンネルカテゴリ）をIDから引く"""
+    if not cid:
+        return None
+    g = _guild(gid)
+    if g is None:
+        return None
+    for c in getattr(g, "categories", []) or []:
+        if c.id == cid:
+            return c
+    return None
+
+
+def _floor_cat_name(gid, cid):
+    cat = _discord_category(gid, cid)
+    return cat.name if cat is not None else None
 
 
 def _fmt_value(item, value):
@@ -46,9 +77,8 @@ def _floor_lines(gid):
     m = floors_map(gid)
     lines = []
     for n in visible_floors(gid):
-        cat_key = m.get(n)
-        cat = category_of(cat_key) if cat_key else None
-        lines.append(f"**{n}階** — {cat['emoji']} {cat['name']}" if cat
+        name = _floor_cat_name(gid, m.get(n))
+        lines.append(f"**{n}階** — 📁 {name}" if name
                      else f"**{n}階** — 未設定")
     return lines
 
@@ -101,9 +131,11 @@ class ElevatorView(discord.ui.View):
     """設定エレベーター: 階 → 機能 → 項目 → 値、全部セレクトで移動する。
     readonly=True のときは閲覧のみ（パネルから一般メンバーが開いた場合）。"""
 
-    def __init__(self, guild_id, owner_id, readonly=False, plain=False):
+    def __init__(self, guild_id, owner_id, readonly=False, plain=False, guild=None):
         super().__init__(timeout=600)
         self.gid = guild_id
+        if guild is not None:
+            _guilds[guild_id] = guild
         self.owner_id = owner_id
         self.readonly = readonly
         self.plain = plain     # True = /設定用（エレベーター式でない素直な画面）
@@ -128,7 +160,7 @@ class ElevatorView(discord.ui.View):
     def current_category(self):
         if self.plain:
             return self.category
-        return self.floor_category()
+        return None
 
     def edit_item(self):
         if self.edit == "__toggle":
@@ -154,12 +186,11 @@ class ElevatorView(discord.ui.View):
         m = floors_map(self.gid)
         options = []
         for i in visible_floors(self.gid):
-            cat_key = m.get(i)
-            cat = category_of(cat_key) if cat_key else None
+            name = _floor_cat_name(self.gid, m.get(i))
             options.append(discord.SelectOption(
-                label=f"{i}階 — {cat['name']}" if cat else f"{i}階 — 未設定",
+                label=f"{i}階 — {name}" if name else f"{i}階 — 未設定",
                 value=str(i),
-                emoji=cat["emoji"] if cat else None,
+                emoji="📁" if name else None,
                 default=(self.floor == i)))
         if not self.readonly:
             options.append(discord.SelectOption(
@@ -185,10 +216,6 @@ class ElevatorView(discord.ui.View):
         if self.feature == "elevator" and self.floor is None:
             self._build_feature_body()
             return
-        cat_key = self.floor_category()
-        if self.floor is None or cat_key is None:
-            return
-        self._build_feature_select(cat_key)
         return
 
     def _build_plain(self):
@@ -256,10 +283,10 @@ class ElevatorView(discord.ui.View):
             label="🔘 有効 / 無効", value="__toggle",
             description="現在: " + ("🟢 有効" if self.cfg().get("enabled") else "⚪ 無効"))]
         for n in sorted(m.keys()):
-            cat = category_of(m[n]) if m.get(n) else None
+            name = _floor_cat_name(self.gid, m.get(n))
             options.append(discord.SelectOption(
                 label=f"{n}階", value=f"floor:{n}",
-                description=("現在: " + (f"{cat['emoji']} {cat['name']}" if cat else "未設定"))[:100]))
+                description=("現在: " + (f"📁 {name}" if name else "未設定"))[:100]))
         options.append(discord.SelectOption(
             label="➕ 階を追加", value="__add_floor",
             description="新しい階を増やす（無限に追加できる）"))
@@ -293,12 +320,11 @@ class ElevatorView(discord.ui.View):
         cur = floors_map(self.gid).get(n)
         opts = [discord.SelectOption(label="未設定", value="__none",
                                      default=(cur is None))]
-        for c in CATEGORIES:
-            if not features_in(c["key"]):
-                continue  # 機能のないカテゴリは選べない
+        g = _guild(self.gid)
+        for c in (getattr(g, "categories", []) or []):
             opts.append(discord.SelectOption(
-                label=f"{c['emoji']} {c['name']}", value=c["key"],
-                default=(cur == c["key"])))
+                label=f"📁 {c.name}"[:100], value=str(c.id),
+                default=(cur == c.id)))
         opts.append(discord.SelectOption(label="🗑 この階を削除", value="__delete"))
         vsel = discord.ui.Select(placeholder=f"✏️ {n}階のカテゴリを選ぶ",
                                  options=opts, row=2)
@@ -314,7 +340,7 @@ class ElevatorView(discord.ui.View):
                 else:
                     mm.pop(n, None)
             else:
-                mm[n] = None if v == "__none" else v
+                mm[n] = None if v == "__none" else int(v)
             save_floors_map(self.gid, mm)
             self.edit = None
             await self._rerender(interaction)
@@ -487,10 +513,10 @@ class ElevatorView(discord.ui.View):
                 m = floors_map(self.gid)
                 if m:
                     for n in sorted(m.keys()):
-                        cat = category_of(m[n]) if m.get(n) else None
+                        name = _floor_cat_name(self.gid, m.get(n))
                         embed.add_field(
                             name=f"{n}階",
-                            value=(f"{cat['emoji']} {cat['name']}" if cat else "未設定"),
+                            value=(f"📁 {name}" if name else "未設定"),
                             inline=True)
                 else:
                     embed.add_field(name="階", value="まだ階がありません", inline=False)
@@ -503,34 +529,44 @@ class ElevatorView(discord.ui.View):
             else:
                 embed.set_footer(text="下のセレクトで項目を選ぶと、その場で変更できるよ")
             return embed
-        cat_key = self.current_category()
-        if cat_key is not None:
-            cat = category_of(cat_key)
-            feats = features_in(cat_key)
-            lines = [f"{f['emoji']} **{f['name']}**"
-                     f"（{'🟢 有効' if self._enabled(f['key']) else '⚪ 無効'}）— {f['desc']}"
-                     for f in feats]
-            title = (f"{cat['emoji']} {cat['name']}" if self.plain
-                     else f"🛗 {self.floor}階 — {cat['emoji']} {cat['name']}")
-            return discord.Embed(
-                title=title,
-                description="\n".join(lines) if lines else "このカテゴリの機能はまだないよ。",
-                color=discord.Color.blurple())
-        if self.floor is not None:
-            return discord.Embed(
-                title=f"🛗 {self.floor}階",
-                description=("この階にはまだカテゴリが設定されてないよ。\n"
-                             "管理者は「階の割り当て設定」から設定できます。"),
-                color=discord.Color.greyple())
         if self.plain:
+            cat_key = self.current_category()
+            if cat_key is not None:
+                cat = category_of(cat_key)
+                feats = features_in(cat_key)
+                lines = [f"{f['emoji']} **{f['name']}**"
+                         f"（{'🟢 有効' if self._enabled(f['key']) else '⚪ 無効'}）— {f['desc']}"
+                         for f in feats]
+                return discord.Embed(
+                    title=f"{cat['emoji']} {cat['name']}",
+                    description="\n".join(lines) if lines else "このカテゴリの機能はまだないよ。",
+                    color=discord.Color.blurple())
             lines = [f"{c['emoji']} **{c['name']}** — {c['desc']}"
                      for c in CATEGORIES if features_in(c["key"])]
             return discord.Embed(
                 title="⚙️ 設定",
                 description="カテゴリを選んでね。\n\n" + "\n".join(lines),
                 color=discord.Color.blurple())
+        if self.floor is not None:
+            cat = _discord_category(self.gid, floors_map(self.gid).get(self.floor))
+            if cat is None:
+                return discord.Embed(
+                    title=f"🛗 {self.floor}階",
+                    description=("この階にはまだカテゴリが設定されてないよ。\n"
+                                 "管理者は /設定 → システム → エレベーター設定 から設定できます。"),
+                    color=discord.Color.greyple())
+            lines = []
+            for ch in (getattr(cat, "channels", []) or [])[:25]:
+                if getattr(ch, "type", None) == discord.ChannelType.voice:
+                    lines.append(f"🔊 {ch.name}")
+                else:
+                    lines.append(f"<#{ch.id}>")
+            return discord.Embed(
+                title=f"🛗 {self.floor}階 — 📁 {cat.name}",
+                description="\n".join(lines) if lines else "このカテゴリにはチャンネルがありません。",
+                color=discord.Color.blurple())
         return discord.Embed(
-            title="🛗 設定エレベーター",
+            title="🛗 エレベーター",
             description="乗りたい階を選んでね。\n\n" + "\n".join(_floor_lines(self.gid)),
             color=discord.Color.blurple())
 
@@ -564,11 +600,10 @@ class ElevatorPanelView(discord.ui.View):
         floors = visible_floors(guild_id) if guild_id is not None else [1]
         options = []
         for i in floors:
-            cat_key = m.get(i)
-            cat = category_of(cat_key) if cat_key else None
+            name = _floor_cat_name(guild_id, m.get(i)) if guild_id is not None else None
             options.append(discord.SelectOption(
                 label=f"{i}階", value=str(i),
-                description=(f"{cat['emoji']} {cat['name']}" if cat else "未設定")[:100]))
+                description=(f"📁 {name}" if name else "未設定")[:100]))
         sel = discord.ui.Select(custom_id="mega_elevator:floor",
                                 placeholder="🛗 乗りたい階を選んでね",
                                 options=options)
@@ -581,7 +616,8 @@ class ElevatorPanelView(discord.ui.View):
         if floor is None:
             return
         session = ElevatorView(interaction.guild.id, interaction.user.id,
-                               readonly=not is_privileged(interaction.user))
+                               readonly=not is_privileged(interaction.user),
+                               guild=interaction.guild)
         session.floor = floor
         await interaction.response.send_message(
             embed=_ride_embed(floor, 0), ephemeral=True)
@@ -615,6 +651,8 @@ async def refresh_elevator_panel(guild_id):
 
 @bot.listen("on_ready")
 async def _refresh_panels_on_ready():
+    for g in bot.guilds:
+        _guilds[g.id] = g
     for gid in list(store.data.keys()):
         if gid.lstrip("-").isdigit():
             await refresh_elevator_panel(int(gid))
@@ -707,7 +745,8 @@ async def cmd_settings(interaction):
     if not is_privileged(interaction.user):
         return await interaction.response.send_message(
             "⚠️ 設定は管理者だけが使えます。", ephemeral=True)
-    view = ElevatorView(interaction.guild.id, interaction.user.id, plain=True)
+    view = ElevatorView(interaction.guild.id, interaction.user.id,
+                        plain=True, guild=interaction.guild)
     await interaction.response.send_message(
         embed=view.embed(), view=view, ephemeral=True)
 
